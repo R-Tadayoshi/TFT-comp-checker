@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TFT Comp Lab</title>
+  <meta name="description" content="Build a Teamfight Tactics comp and see exactly how each item changes a unit's stats.">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 7v14l-12 7L4 23V9z' fill='%2312201c' stroke='%23b8a5ff' stroke-width='2'/%3E%3Cpath d='M10 17l4 4 8-9' fill='none' stroke='%2379deb0' stroke-width='2.5'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Schibsted+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="boot" class="boot" role="status" aria-live="polite">
+    <div class="boot-card">
+      <h1 class="boot-title">TFT Comp Lab</h1>
+      <p id="boot-msg">Loading the current set…</p>
+      <div class="boot-bar" id="boot-bar" hidden><span id="boot-fill"></span></div>
+      <p class="boot-sub" id="boot-sub"></p>
+      <button id="boot-retry" class="btn" hidden>Try again</button>
+    </div>
+  </div>
+
+  <header class="top">
+    <div class="top-l">
+      <h1 class="logo">TFT Comp Lab</h1>
+      <span class="badge" id="set-badge" hidden></span>
+    </div>
+    <div class="top-r">
+      <span class="src" id="src-note"></span>
+      <button class="btn" id="btn-share" type="button">Copy share link</button>
+      <button class="btn ghost" id="btn-reset" type="button">Clear comp</button>
+    </div>
+  </header>
+
+  <main class="shell" id="app" hidden>
+    <aside class="pool panel" aria-label="Champion pool">
+      <h2 class="h">Champions</h2>
+      <div class="pool-filters">
+        <input id="q" type="search" placeholder="Search a champion" aria-label="Search champions" autocomplete="off">
+        <div class="costs" id="costs" role="group" aria-label="Filter by cost"></div>
+        <select id="trait-filter" aria-label="Filter by trait"></select>
+      </div>
+      <div class="grid" id="pool-grid"></div>
+    </aside>
+
+    <section class="work">
+      <section class="panel" aria-labelledby="team-h">
+        <div class="row between">
+          <h2 class="h" id="team-h">Your comp</h2>
+          <label class="cap">Team size
+            <select id="cap" aria-label="Team size"></select>
+          </label>
+        </div>
+        <div class="traits" id="traits" aria-label="Active traits"></div>
+        <div class="team" id="team"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="lab-h" id="lab-panel">
+        <h2 class="h" id="lab-h">Item lab</h2>
+        <div id="lab"></div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <details>
+      <summary>How the numbers work</summary>
+      <div class="how">
+        <p>Each unit starts from its real base stats for the chosen star level (×1.8 Health and ×1.5 Attack Damage per star). Items add their flat stats on top: Attack Damage and Attack Speed are percentages of the unit's own base values, Ability Power starts at 100.</p>
+        <p><strong>Score</strong> compares a build with the same unit holding nothing. It blends auto-attack damage, ability output (casts in 20 seconds × damage scaling) and effective Health, weighted by the role you pick. AD carry and AP caster mostly count damage, Tank mostly counts survivability.</p>
+        <p><strong>Not modelled:</strong> conditional item effects (stacking, shields, triggers), trait bonuses, augments, and special trait rules such as Avatar or Apex Predator. Crit chance is capped at 100%. Use the score to shortlist items, then read each item's own text.</p>
+        <p>Data comes from <a href="https://communitydragon.org" target="_blank" rel="noopener">CommunityDragon</a>. This is a fan project and is not endorsed by Riot Games.</p>
+      </div>
+    </details>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

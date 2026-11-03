@@ -1,0 +1,5 @@
+{
+  "_help": "Fix the item list without touching code. Use item names or apiNames. 'excludeItems' hides an item (e.g. one that was removed from the game). 'includeItems' forces an item in.",
+  "excludeItems": [],
+  "includeItems": []
+}
