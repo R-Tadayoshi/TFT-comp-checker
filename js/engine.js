@@ -21,7 +21,7 @@ export const MODES = {
   balanced: { label: 'Bruiser',    short: 'Bruiser',  auto: 0.50, spell: 0.50, dmg: 0.55, def: 0.45 },
 };
 
-const STAT_NAMES = ['ad', 'ap', 'as', 'armor', 'mr', 'hp', 'crit', 'critDmg', 'mana', 'manaRegen', 'amp', 'dur', 'omni', 'dodge'];
+const STAT_NAMES = ['ad', 'ap', 'as', 'armor', 'mr', 'hp', 'crit', 'critDmg', 'mana', 'manaRegen', 'amp', 'dur', 'omni', 'dodge', 'hpPct', 'shield'];
 
 export function sumStats(items) {
   const t = Object.fromEntries(STAT_NAMES.map((k) => [k, 0]));
@@ -32,12 +32,14 @@ export function sumStats(items) {
   return t;
 }
 
-export function computeStats(champ, star, items) {
+// `extra` holds bonuses that do not come from items (trait bonuses), same stat names as item stats.
+export function computeStats(champ, star, items, extra) {
   const s = champ.stats;
   const b = sumStats(items);
+  if (extra) for (const k of Object.keys(extra)) b[k] = (b[k] || 0) + extra[k];
   const ad0 = s.ad * Math.pow(STAR_AD, star - 1);
 
-  const hp = s.hp * Math.pow(STAR_HP, star - 1) + b.hp;
+  const hp = s.hp * Math.pow(STAR_HP, star - 1) * (1 + b.hpPct) + b.hp;
   const ad = ad0 * (1 + b.ad);
   const as = s.as * (1 + b.as);
   const ap = 100 + b.ap;
@@ -69,8 +71,9 @@ export function computeStats(champ, star, items) {
   const spellIdx = casts * scale * (1 + amp);
 
   const autoDps = ad * as * (1 + crit * (critMult - 1)) * (1 + amp);
-  const ehpP = (hp * (1 + armor / 100)) / (1 - dur) / (1 - Math.min(0.9, b.dodge));
-  const ehpM = (hp * (1 + mr / 100)) / (1 - dur);
+  const shield = 1 + b.shield; // a shield on max Health is extra effective Health
+  const ehpP = (hp * shield * (1 + armor / 100)) / (1 - dur) / (1 - Math.min(0.9, b.dodge));
+  const ehpM = (hp * shield * (1 + mr / 100)) / (1 - dur);
 
   return { hp, ad, as, ap, armor, mr, crit, critMult, amp, dur, omni: b.omni, dodge: b.dodge,
     maxMana, startMana, firstCast, casts, spellIdx, autoDps, ehpP, ehpM, range: s.range };
@@ -96,12 +99,12 @@ export function guessMode(champ) {
   return 'hybrid';
 }
 
-export function bestBuilds(champ, star, modeKey, pool, size = 3, keep = 6) {
+export function bestBuilds(champ, star, modeKey, pool, size = 3, keep = 6, extra) {
   const items = pool.filter((i) => Object.keys(i.stats || {}).length > 0);
-  const naked = computeStats(champ, star, []);
+  const naked = computeStats(champ, star, [], extra);
   const top = [];
   const push = (combo) => {
-    const st = computeStats(champ, star, combo);
+    const st = computeStats(champ, star, combo, extra);
     const sc = scoreOf(st, naked, modeKey);
     if (top.length < keep || sc > top[top.length - 1].score) {
       top.push({ items: combo, stats: st, score: sc });

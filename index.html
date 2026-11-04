@@ -50,9 +50,12 @@
       <section class="panel" aria-labelledby="team-h">
         <div class="row between">
           <h2 class="h" id="team-h">Your comp</h2>
-          <label class="cap">Team size
-            <select id="cap" aria-label="Team size"></select>
-          </label>
+          <div class="row wrap">
+            <label class="cap chk"><input type="checkbox" id="traits-on"> Count trait bonuses in the numbers</label>
+            <label class="cap">Team size
+              <select id="cap" aria-label="Team size"></select>
+            </label>
+          </div>
         </div>
         <div class="traits" id="traits" aria-label="Active traits"></div>
         <div class="team" id="team"></div>
@@ -71,7 +74,8 @@
       <div class="how">
         <p>Each unit starts from its real base stats for the chosen star level (×1.8 Health and ×1.5 Attack Damage per star). Items add their flat stats on top: Attack Damage and Attack Speed are percentages of the unit's own base values, Ability Power starts at 100.</p>
         <p><strong>Score</strong> compares a build with the same unit holding nothing. It blends auto-attack damage, ability output (casts in 20 seconds × damage scaling) and effective Health, weighted by the role you pick. AD carry and AP caster mostly count damage, Tank mostly counts survivability.</p>
-        <p><strong>Not modelled:</strong> conditional item effects (stacking, shields, triggers), trait bonuses, augments, and special trait rules such as Avatar or Apex Predator. Crit chance is capped at 100%. Use the score to shortlist items, then read each item's own text.</p>
+        <p><strong>Trait bonuses:</strong> the active tier of each trait adds its stats to the units it applies to (members, the whole team, or units next to a member, depending on the trait, using the hex board for adjacency). Traits marked as not counted are listed under your traits. The rules are in <code>config/traits.json</code>.</p>
+        <p><strong>Not modelled:</strong> conditional item and trait effects (stacking, triggers, ramping bonuses are estimated), augments, and special trait rules such as Avatar or Apex Predator. Crit chance is capped at 100%. Use the score to shortlist items, then read each item's own text.</p>
         <p>Data comes from <a href="https://communitydragon.org" target="_blank" rel="noopener">CommunityDragon</a>. This is a fan project and is not endorsed by Riot Games.</p>
       </div>
     </details>

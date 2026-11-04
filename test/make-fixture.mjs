@@ -2,6 +2,7 @@
 // Champion stats are copied from the real Set 18 data. ITEMS ARE SYNTHETIC: only for testing the code.
 import { writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { fnv1a } from '../js/slim.js';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -16,7 +17,7 @@ const champ = (apiName, name, cost, traits, st, desc, setTag = 18) => ({
 //                                armor AS    AD   HP   iMana mana range
 const set18 = [
   champ('DA_Karma18', 'Karma', 1, ['Blossom', 'Spellweaver'], [25, 0.7, 25, 500, 0, 40, 4], 'Tether dealing @X@ %i:scaleAP% magic damage.'),
-  champ('DA_18_LeBlanc', 'LeBlanc', 2, ['Elderwood', 'Spellweaver'], [30, 0.7, 30, 550, 0, 40, 4], 'Launch a mirror image dealing @X@ %i:scaleAP% magic damage.'),
+  champ('DA_18_LeBlanc', 'LeBlanc', 2, ['Elderwood', 'Spellweaver', 'Defender'], [30, 0.7, 30, 550, 0, 40, 4], 'Launch a mirror image dealing @X@ %i:scaleAP% magic damage.'),
   champ('DA_18_MasterYi_AD', 'Master Yi', 3, ['Blossom', 'Adaptor'], [55, 0.8, 63, 850, 0, 3, 1], 'Every third attack is a Double Strike. Adaptor %i:scaleAD% grants Attack Speed. %i:scaleAP% bonus damage.'),
   champ('DA_18_Shen', 'Shen', 2, ['Inferno', 'Defender'], [45, 0.65, 50, 900, 30, 90, 1], 'Grant @X@ %i:scaleAP% Shield to Shen. Both attacks deal bonus %i:scaleAP% damage.'),
   champ('DA_18_Warwick', 'Warwick', 2, ['Blackthorn', 'Ravager'], [45, 0.75, 45, 750, 0, 40, 1], 'Bite dealing @X@ %i:scaleAD% physical damage.'),
@@ -41,10 +42,17 @@ const trait = (apiName, name, tiers, desc = '') => ({
 const traits18 = [
   trait('DA_18_Blossom', 'Blossom', [[3, 4, 1, { ADAP: 0.12 }], [5, 6, 3, { ADAP: 0.3 }], [7, 8, 5, { ADAP: 0.5 }]],
     'Blossom champions gain AD and AP.<row>(@MinUnits@) @ADAP*100@% AD/AP</row><row>(@MinUnits@) @ADAP*100@%</row><row>(@MinUnits@) @ADAP*100@%</row>'),
-  trait('DA_18_Spellweaver', 'Spellweaver', [[2, 3, 1], [4, 5, 3], [6, 25000, 5]]),
+  trait('DA_18_Spellweaver', 'Spellweaver', [
+    [2, 3, 1, { TeamwideAP: 0.1, ['{' + fnv1a('SpellweaverAP') + '}']: 0.1 }],
+    [4, 5, 3, { TeamwideAP: 0.1, ['{' + fnv1a('SpellweaverAP') + '}']: 0.3 }],
+    [6, 25000, 5, { TeamwideAP: 0.1, ['{' + fnv1a('SpellweaverAP') + '}']: 0.55 }]],
+    'Your team gains @TeamwideAP*100@% AP. Spellweavers gain more.<row>(@MinUnits@) @SpellweaverAP*100@% AP</row><row>(@MinUnits@) @SpellweaverAP*100@% AP</row><row>(@MinUnits@) @SpellweaverAP*100@% AP</row>'),
   trait('DA_18_Adaptor', 'Adaptor', [[2, 2, 1], [3, 3, 3], [4, 25000, 5]]),
   trait('DA_18_Elderwood', 'Elderwood', [[3, 4, 1], [5, 6, 3]]),
-  trait('DA_18_Defender', 'Defender', [[2, 3, 1], [4, 5, 3], [6, 25000, 5]]),
+  trait('DA_18_Defender', 'Defender', [
+    [2, 3, 1, { ['{' + fnv1a('NonDefenderDefenseGain') + '}']: 12, ['{' + fnv1a('DefenderDefenseGain') + '}']: 25 }],
+    [4, 5, 3, { ['{' + fnv1a('NonDefenderDefenseGain') + '}']: 12, ['{' + fnv1a('DefenderDefenseGain') + '}']: 60 }]],
+    'Your team gains @NonDefenderDefenseGain@ Armor and Magic Resist. Defenders gain more.<row>(@MinUnits@) @DefenderDefenseGain@</row><row>(@MinUnits@) @DefenderDefenseGain@</row>'),
   trait('DA_18_Inferno', 'Inferno', [[2, 2, 1], [3, 4, 3]]),
   trait('DA_18_Slayer', 'Ravager', [[2, 3, 1, { Omnivamp: 0.1 }], [4, 5, 3], [6, 25000, 5]]),
   trait('DA_18_Blackthorn', 'Blackthorn', [[2, 3, 1], [4, 5, 3]]),

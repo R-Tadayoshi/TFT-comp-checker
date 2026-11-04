@@ -1,5 +1,7 @@
 import { loadData } from './loader.js';
 import { computeStats, scoreOf, guessMode, bestBuilds, MODES } from './engine.js';
+import { applyTraits } from './traits.js';
+import { ROWS as BROWS, COLS, SIZE, firstFree } from './board.js';
 
 /* ───────────── tiny DOM helpers ───────────── */
 
@@ -45,6 +47,13 @@ function pic(url, label, size = 44, cls = '') {
   return w;
 }
 
+// A focusable div that acts like a button (draggable buttons do not drag in Firefox).
+function press(el, fn) {
+  el.addEventListener('click', fn);
+  el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(e); } });
+  return el;
+}
+
 /* ───────────── state ───────────── */
 
 const MAX_ITEMS = 3;
@@ -58,13 +67,15 @@ const S = {
   sort: 'score', itemQ: '', itemComp: '', showAll: false,
   filters: { q: '', cost: 0, trait: '' },
   builds: null, computing: false,
+  rules: {}, tinfo: null, traitsOn: true,
 };
+let dragging = null; // { kind: 'pool' | 'unit', id }
 
 /* ───────────── persistence & share link ───────────── */
 
 function encodeHash() {
   const c = S.team
-    .map((u) => [u.id, u.star, u.items.join('+'), u.mode || ''].map(encodeURIComponent).join('~'))
+    .map((u) => [u.id, u.star, u.items.join('+'), u.mode || '', u.pos ?? ''].map(encodeURIComponent).join('~'))
     .join(',');
   return `n=${S.cap}&c=${c}`;
 }
@@ -78,8 +89,8 @@ function decodeHash(hash) {
     if (k === 'n') out.cap = Number(v) || null;
     if (k === 'c' && v) {
       for (const unit of v.split(',')) {
-        const [id, star, items, mode] = unit.split('~').map((s) => decodeURIComponent(s || ''));
-        out.team.push({ id, star: Number(star) || 2, items: items ? items.split('+') : [], mode: mode || undefined });
+        const [id, star, items, mode, pos] = unit.split('~').map((s) => decodeURIComponent(s || ''));
+        out.team.push({ id, star: Number(star) || 2, items: items ? items.split('+') : [], mode: mode || undefined, pos: pos === '' || pos == null ? undefined : Number(pos) });
       }
     }
   }
@@ -97,19 +108,25 @@ function cleanTeam(list) {
       star: Math.min(3, Math.max(1, u.star | 0 || 2)),
       items: (u.items || []).filter((id) => S.item[id]).filter((id, i, a) => a.indexOf(id) === i).slice(0, MAX_ITEMS),
       mode: MODES[u.mode] ? u.mode : undefined,
+      pos: Number.isInteger(u.pos) && u.pos >= 0 && u.pos < SIZE ? u.pos : undefined,
     });
   }
+  // keep valid, unique hexes; everyone else goes to the first free hex
+  const taken = new Set();
+  for (const u of out) { if (u.pos != null && !taken.has(u.pos)) taken.add(u.pos); else u.pos = undefined; }
+  for (const u of out) if (u.pos == null) { u.pos = firstFree(taken); taken.add(u.pos); }
   return out;
 }
 
 function persist() {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ set: S.data.meta.set, cap: S.cap, team: S.team }));
+    localStorage.setItem(KEY, JSON.stringify({ set: S.data.meta.set, cap: S.cap, team: S.team, traitsOn: S.traitsOn }));
   } catch { /* private mode: fine */ }
   history.replaceState(null, '', '#' + encodeHash());
 }
 
 function restore() {
+  try { const pref = JSON.parse(localStorage.getItem(KEY) || 'null'); if (pref && pref.traitsOn === false) S.traitsOn = false; } catch { /* ignore */ }
   const fromHash = decodeHash(location.hash);
   if (fromHash.team.length) {
     S.team = cleanTeam(fromHash.team);
@@ -148,11 +165,34 @@ function inspect(ref) {
   render();
 }
 
-function addUnit(id) {
+function usedPositions() { return new Set(S.team.map((u) => u.pos)); }
+
+// Put a unit on a hex; whoever stands there swaps to the hex it leaves.
+function place(u, pos) {
+  const other = S.team.find((x) => x !== u && x.pos === pos);
+  if (other) other.pos = u.pos;
+  u.pos = pos;
+}
+
+function moveUnit(u, pos) {
+  if (u.pos === pos) return;
+  place(u, pos);
+  persist();
+  render();
+}
+
+function addUnit(id, pos) {
   const existing = S.team.find((u) => u.id === id);
-  if (existing) return inspect(existing);
+  if (existing) { if (pos != null) { place(existing, pos); persist(); } return inspect(existing); }
   if (S.team.length >= S.cap) return flash(`Team is full (${S.cap}). Raise the team size or remove a unit.`);
   const u = { id, star: 2, items: [] };
+  if (pos != null) {
+    const other = S.team.find((x) => x.pos === pos);
+    if (other) other.pos = firstFree(new Set([...usedPositions(), pos]));
+    u.pos = pos;
+  } else {
+    u.pos = firstFree(usedPositions());
+  }
   S.team.push(u);
   persist();
   inspect(u);
@@ -209,14 +249,15 @@ function renderPool() {
   const grid = $('#pool-grid');
   grid.replaceChildren(
     ...list.map((c) =>
-      h('button', {
+      press(h('div', {
         class: `tile c${c.cost}` + (inTeam.has(c.id) ? ' in' : ''),
-        type: 'button',
+        role: 'button', tabindex: '0', draggable: 'true',
         title: `${c.name} · ${c.cost}-cost · ${c.traits.join(', ')}`,
         'aria-label': `${inTeam.has(c.id) ? 'Select' : 'Add'} ${c.name}, ${c.cost}-cost`,
         'data-fk': 'pool:' + c.id,
-        onclick: () => addUnit(c.id),
-      }, pic(c.icon, c.name, 52), h('span', { class: 'tn', text: c.name })),
+        ondragstart: (e) => startDrag(e, { kind: 'pool', id: c.id }),
+        ondragend: endDrag,
+      }, pic(c.icon, c.name, 52), h('span', { class: 'tn', text: c.name })), () => addUnit(c.id)),
     ),
   );
   if (!list.length) grid.append(h('p', { class: 'muted', text: 'No champion matches that search.' }));
@@ -224,30 +265,92 @@ function renderPool() {
 
 /* ───────────── team & traits ───────────── */
 
+function startDrag(e, d) {
+  dragging = d;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', d.kind + ':' + d.id); } catch { /* ignore */ }
+  document.body.classList.add('dragging');
+}
+function endDrag() {
+  dragging = null;
+  document.body.classList.remove('dragging');
+  document.querySelectorAll('.over').forEach((n) => n.classList.remove('over'));
+}
+
+function dropOn(pos) {
+  const d = dragging;
+  endDrag();
+  if (!d) return;
+  if (d.kind === 'pool') addUnit(d.id, pos);
+  else { const u = S.team.find((x) => x.id === d.id); if (u) moveUnit(u, pos); }
+}
+
+const ARROWS = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -COLS, ArrowDown: COLS };
+
+function portrait(c) {
+  const img = h('img', { src: c.icon || '', alt: '', draggable: 'false', decoding: 'async' });
+  const wrap = h('span', { class: 'hpic' }, img);
+  const fb = () => { wrap.classList.add('noimg'); wrap.replaceChildren(c.name.replace(/\(.*\)/, '').trim().slice(0, 2)); };
+  if (!c.icon) fb(); else img.addEventListener('error', fb);
+  return wrap;
+}
+
+function hexCell(pos, u) {
+  const over = (e) => { if (!dragging) return; e.preventDefault(); e.currentTarget.classList.add('over'); };
+  const leave = (e) => e.currentTarget.classList.remove('over');
+  const drop = (e) => { e.preventDefault(); dropOn(pos); };
+  if (!u) {
+    return h('div', {
+      class: 'hcell empty', 'data-pos': String(pos),
+      onclick: () => { if (S.team.includes(S.ref)) moveUnit(S.ref, pos); },
+      ondragover: over, ondragleave: leave, ondrop: drop,
+    }, h('span', { class: 'hring' }), h('span', { class: 'hin' }));
+  }
+  const c = S.champ[u.id];
+  const sel = S.ref === u;
+  const nextStar = () => { u.star = (u.star % 3) + 1; S.builds = null; persist(); render(); };
+  const main = press(h('div', {
+    class: 'hin', role: 'button', tabindex: '0', 'aria-pressed': String(sel), 'data-fk': 'unit:' + u.id,
+    title: `${c.name} · ${c.traits.join(', ')}`,
+    'aria-label': `${c.name}, ${u.star} star. Select it to try items. Arrow keys move it on the board.`,
+  }, portrait(c), h('span', { class: 'hname', text: c.name.replace(/\s*\(.*\)$/, '') })), () => inspect(u));
+  main.addEventListener('keydown', (e) => {
+    const d = ARROWS[e.key];
+    if (d == null) return;
+    const to = pos + d;
+    if (to < 0 || to >= SIZE || (Math.abs(d) === 1 && Math.floor(to / COLS) !== Math.floor(pos / COLS))) return;
+    e.preventDefault();
+    moveUnit(u, to);
+  });
+  const items = u.items.map((id) => S.item[id]).filter(Boolean);
+  return h('div', {
+    class: `hcell has c${c.cost}` + (sel ? ' sel' : ''), 'data-pos': String(pos), draggable: 'true',
+    ondragstart: (e) => { startDrag(e, { kind: 'unit', id: u.id }); e.currentTarget.classList.add('lift'); },
+    ondragend: endDrag, ondragover: over, ondragleave: leave, ondrop: drop,
+  },
+    h('span', { class: 'hring' }),
+    main,
+    h('button', { class: 'hstar', type: 'button', 'aria-label': `${c.name}: ${u.star} star. Click to change.`, onclick: (e) => { e.stopPropagation(); nextStar(); }, text: '★'.repeat(u.star) }),
+    items.length ? h('span', { class: 'hitems' }, items.map((it) => h('span', { class: 'hi', title: it.name }, h('img', { src: it.icon || '', alt: it.name, draggable: 'false' })))) : null,
+    h('button', { class: 'hx', type: 'button', 'aria-label': `Remove ${c.name}`, onclick: (e) => { e.stopPropagation(); removeUnit(u); }, text: '×' }),
+  );
+}
+
 function renderTeam() {
   const box = $('#team');
-  box.replaceChildren();
-  if (!S.team.length) {
-    box.append(h('p', { class: 'empty', text: 'Pick champions from the list to build your comp. Click a unit here to try items on it.' }));
-    return;
+  const byPos = new Map(S.team.map((u) => [u.pos, u]));
+  const rows = [];
+  for (let r = 0; r < BROWS; r++) {
+    const cells = [];
+    for (let col = 0; col < COLS; col++) cells.push(hexCell(r * COLS + col, byPos.get(r * COLS + col)));
+    rows.push(h('div', { class: 'brow' + (r % 2 ? ' odd' : '') }, cells));
   }
-  for (const u of S.team) {
-    const c = S.champ[u.id];
-    const sel = S.ref === u;
-    const next = () => { u.star = (u.star % 3) + 1; persist(); render(); };
-    box.append(
-      h('div', { class: `unit c${c.cost}` + (sel ? ' sel' : '') },
-        h('button', { class: 'unit-main', type: 'button', 'aria-pressed': String(sel), 'data-fk': 'unit:' + u.id, onclick: () => inspect(u) },
-          pic(c.icon, c.name, 58), h('span', { class: 'un', text: c.name })),
-        h('div', { class: 'unit-meta' },
-          h('button', { class: 'stars', type: 'button', 'aria-label': `${c.name}: ${u.star} star. Click to change.`, onclick: next, text: '★'.repeat(u.star) + '☆'.repeat(3 - u.star) }),
-          h('span', { class: 'mini-items' },
-            [0, 1, 2].map((i) => { const it = S.item[u.items[i]]; return it ? pic(it.icon, it.name, 20, 'sq') : h('span', { class: 'dot' }); })),
-        ),
-        h('button', { class: 'x', type: 'button', 'aria-label': `Remove ${c.name}`, onclick: () => removeUnit(u), text: '×' }),
-      ),
-    );
-  }
+  box.replaceChildren(
+    h('div', { class: 'board-wrap' }, h('div', { class: 'board', role: 'group', 'aria-label': 'Board: 4 rows of 7 hexes' }, rows)),
+    h('p', { class: 'muted small board-hint', text: S.team.length
+      ? 'Drag units to place them (drag onto the champion list to remove). Or select a unit and click an empty hex. Arrow keys move the focused unit. Click the stars to change star level.'
+      : 'Click or drag champions from the list onto the board. Click a unit to try items on it.' }),
+  );
 }
 
 function traitCounts() {
@@ -274,15 +377,19 @@ function renderTraits() {
     for (const tier of t.tiers) { if (count >= tier.min) active = tier; else if (!next) next = tier; }
     return { t, count, active, next };
   });
+  const notCounted = new Set(S.tinfo ? S.tinfo.uncounted.map((x) => x.name) : []);
   rows.sort((a, b) => (b.active ? b.active.style : 0) - (a.active ? a.active.style : 0) || b.count - a.count || a.t.name.localeCompare(b.t.name));
   for (const { t, count, active, next } of rows) {
     box.append(
-      h('span', { class: 'trait ' + (active ? 's' + active.style : 'off'), title: `${t.name}\n${t.desc || ''}`.trim() },
+      h('span', { class: 'trait ' + (active ? 's' + active.style : 'off') + (active && notCounted.has(t.name) ? ' nostat' : ''), title: `${t.name}\n${t.desc || ''}`.trim() + (active && notCounted.has(t.name) ? '\n\n(Its stat bonus is not counted in the numbers.)' : '') },
         pic(t.icon, t.name, 22, 'ti'),
         h('b', { text: count }),
         h('span', { text: t.name }),
         next ? h('i', { text: '/' + next.min }) : null),
     );
+  }
+  if (S.traitsOn && notCounted.size) {
+    box.append(h('p', { class: 'muted small trait-note', text: `Active, but their bonus is not counted in the numbers: ${[...notCounted].join(', ')}.` }));
   }
 }
 
@@ -303,6 +410,8 @@ const STAT_LABEL = {
   dur: (v) => `${signed(v, (x) => pct(x))} Durability`,
   omni: (v) => `${signed(v, (x) => pct(x))} Omnivamp`,
   dodge: (v) => `${signed(v, (x) => pct(x))} Dodge`,
+  hpPct: (v) => `${signed(v, (x) => pct(x))} base HP`,
+  shield: (v) => `${signed(v, (x) => pct(x))} HP as shield`,
 };
 
 function statChips(it) {
@@ -347,21 +456,27 @@ function cell(row, v, base, isBase) {
   return h('td', { class: 'num' }, kids);
 }
 
-function statTable(naked, cols, modeKey) {
-  const head = h('tr', null, h('th', { scope: 'col', text: 'Stat' }), h('th', { scope: 'col', class: 'num', text: 'No items' }),
+// base = unit with nothing, ref = unit with its trait bonuses (or the same when there are none)
+function statTable(base, ref, cols, modeKey, hasT) {
+  const nb = withExtras(base, base);
+  const nt = withExtras(ref, base);
+  const bigScore = (d, on) => h('td', { class: 'num' }, h('span', { class: 'v big ' + (d > 0.0005 ? 'up' : d < -0.0005 ? 'down' : ''), text: on ? signed(d, (x) => pct(x, 1)) : '—' }));
+  const head = h('tr', null,
+    h('th', { scope: 'col', text: 'Stat' }),
+    h('th', { scope: 'col', class: 'num', text: hasT ? 'Base' : 'No items' }),
+    hasT ? h('th', { scope: 'col', class: 'num', text: 'With traits' }) : null,
     ...cols.map((c) => h('th', { scope: 'col', class: 'num', text: c.label })));
-  const nk = withExtras(naked, naked);
-  const scoreRow = h('tr', { class: 'score-row' }, h('th', { scope: 'row' }, 'Build score ', h('small', { text: MODES[modeKey].label })),
+  const scoreRow = h('tr', { class: 'score-row' },
+    h('th', { scope: 'row' }, 'Build score ', h('small', { text: MODES[modeKey].label + (hasT ? ', items on top of traits' : '') })),
     h('td', { class: 'num' }, h('span', { class: 'v', text: '—' })),
-    ...cols.map((c) => {
-      const d = scoreOf(c.stats, naked, modeKey) - 1;
-      return h('td', { class: 'num' }, h('span', { class: 'v big ' + (d > 0.0005 ? 'up' : d < -0.0005 ? 'down' : ''), text: c.items.length ? signed(d, (x) => pct(x, 1)) : '—' }));
-    }));
-  const body = ROWS.filter((r) => !(r.k === 'spellRel' && naked.spellIdx <= 0) && !(['firstCast', 'casts', 'startMana'].includes(r.k) && naked.maxMana <= 0))
+    hasT ? h('td', { class: 'num' }, h('span', { class: 'v', text: '—' })) : null,
+    ...cols.map((c) => bigScore(scoreOf(c.stats, ref, modeKey) - 1, c.items.length)));
+  const body = ROWS.filter((r) => !(r.k === 'spellRel' && base.spellIdx <= 0) && !(['firstCast', 'casts', 'startMana'].includes(r.k) && base.maxMana <= 0))
     .map((r) => h('tr', null,
       h('th', { scope: 'row', text: r.short || r.label }),
-      cell(r, nk[r.k], null, true),
-      ...cols.map((c) => cell(r, withExtras(c.stats, naked)[r.k], nk[r.k], false))));
+      cell(r, nb[r.k], null, true),
+      hasT ? cell(r, nt[r.k], nb[r.k], false) : null,
+      ...cols.map((c) => cell(r, withExtras(c.stats, base)[r.k], nt[r.k], false))));
   return h('table', { class: 'stats' }, h('thead', null, head), h('tbody', null, scoreRow, body));
 }
 
@@ -386,17 +501,17 @@ function slotRow(which) {
   );
 }
 
-function rankPanel(c, star, naked, modeKey) {
+function rankPanel(c, star, naked, modeKey, extra) {
   const arr = currentArr();
   const slot = Math.min(S.slot, arr.length);
   const baseItems = arr.filter((_, i) => i !== slot).map((id) => S.item[id]);
-  const baseStats = computeStats(c, star, baseItems);
+  const baseStats = computeStats(c, star, baseItems, extra);
   const baseScore = scoreOf(baseStats, naked, modeKey);
 
   let rows = S.data.items
     .filter((it) => !baseItems.includes(it))
     .map((it) => {
-      const st = computeStats(c, star, [...baseItems, it]);
+      const st = computeStats(c, star, [...baseItems, it], extra);
       const rel = (a, b) => (b > 0 ? a / b - 1 : 0);
       return {
         it, st,
@@ -467,8 +582,8 @@ function rankPanel(c, star, naked, modeKey) {
   );
 }
 
-function buildsPanel(c, star, modeKey) {
-  const key = `${c.id}|${star}|${modeKey}`;
+function buildsPanel(c, star, modeKey, extra, hasT) {
+  const key = `${c.id}|${star}|${modeKey}|${JSON.stringify(extra)}`;
   const have = S.builds && S.builds.key === key ? S.builds.list : null;
   const body = [];
   if (have) {
@@ -488,8 +603,8 @@ function buildsPanel(c, star, modeKey) {
     S.computing = true;
     render();
     setTimeout(() => {
-      const naked = computeStats(c, star, []);
-      S.builds = { key, list: bestBuilds(c, star, modeKey, S.data.items, 3, 6).map((b) => ({ ...b, naked })) };
+      const naked = computeStats(c, star, [], extra);
+      S.builds = { key, list: bestBuilds(c, star, modeKey, S.data.items, 3, 6, extra).map((b) => ({ ...b, naked })) };
       S.computing = false;
       render();
     }, 30);
@@ -498,7 +613,7 @@ function buildsPanel(c, star, modeKey) {
     h('div', { class: 'row between wrap' },
       h('div', null,
         h('h3', { class: 'h3', text: `Best 3-item builds for ${c.name}` }),
-        h('p', { class: 'muted small', text: `Tries every combination of ${S.data.items.length} items at ${star} star, role: ${MODES[modeKey].label}. Flat stats only.` })),
+        h('p', { class: 'muted small', text: `Tries every combination of ${S.data.items.length} items at ${star} star, role: ${MODES[modeKey].label}${hasT ? ', including this unit’s trait bonuses' : ''}. Flat stats only.` })),
       h('button', { class: 'btn', type: 'button', disabled: S.computing ? '' : null, onclick: run, text: S.computing ? 'Calculating…' : have ? 'Recalculate' : 'Find the best builds' })),
     body);
 }
@@ -509,11 +624,25 @@ function renderLab() {
   const c = S.champ[ref.id];
   const guess = guessMode(c);
   const modeKey = ref.mode || guess;
-  const naked = computeStats(c, ref.star, []);
+  const onBoard = S.team.includes(ref);
+  const slotInfo = S.traitsOn && onBoard && S.tinfo ? S.tinfo.byUnit.get(ref) : null;
+  const extra = slotInfo ? slotInfo.stats : {};
+  const hasT = Object.keys(extra).length > 0;
+  const base = computeStats(c, ref.star, []);
+  const naked = hasT ? computeStats(c, ref.star, [], extra) : base;
   const A = ref.items.map((id) => S.item[id]);
   const B = S.B.map((id) => S.item[id]);
-  const cols = [{ label: 'Build A', items: A, stats: computeStats(c, ref.star, A) }];
-  if (S.compare) cols.push({ label: 'Build B', items: B, stats: computeStats(c, ref.star, B) });
+  const cols = [{ label: 'Build A', items: A, stats: computeStats(c, ref.star, A, extra) }];
+  if (S.compare) cols.push({ label: 'Build B', items: B, stats: computeStats(c, ref.star, B, extra) });
+
+  const label = (stats) => Object.entries(stats).map(([k, v]) => (STAT_LABEL[k] ? STAT_LABEL[k](v) : null)).filter(Boolean).join(', ');
+  const tnotes = !S.traitsOn ? null
+    : slotInfo && slotInfo.notes.length
+      ? h('div', { class: 'tnotes' }, h('span', { class: 'muted small', text: 'Trait bonuses on this unit:' }),
+          slotInfo.notes.map((n) => h('span', { class: 'chip tchip', title: `${n.trait} (${n.count})`, text: `${n.trait} ${n.count}${n.adjacent ? ' · adjacent' : ''}: ${label(n.stats)}` })))
+      : !onBoard && S.team.length
+        ? h('p', { class: 'muted small tnotes', text: 'This unit is not on your board, so no trait bonuses are counted. Add it to your comp to include them.' })
+        : null;
 
   const unitSel = h('select', { 'aria-label': 'Unit to test', onchange: (e) => {
     const id = e.target.value;
@@ -547,10 +676,11 @@ function renderLab() {
   const left = h('div', { class: 'lab-l' },
     slotRow('A'),
     S.compare ? slotRow('B') : h('button', { class: 'link', type: 'button', onclick: () => { S.compare = true; S.edit = 'B'; S.slot = 0; render(); }, text: '+ Compare with a second build' }),
-    statTable(naked, cols, modeKey),
+    tnotes,
+    statTable(base, naked, cols, modeKey, hasT),
     ability);
 
-  box.replaceChildren(head, h('div', { class: 'lab-grid' }, left, rankPanel(c, ref.star, naked, modeKey)), buildsPanel(c, ref.star, modeKey));
+  box.replaceChildren(head, h('div', { class: 'lab-grid' }, left, rankPanel(c, ref.star, naked, modeKey, extra)), buildsPanel(c, ref.star, modeKey, extra, hasT));
 }
 
 /* ───────────── render orchestration ───────────── */
@@ -558,6 +688,7 @@ function renderLab() {
 function render() {
   const focus = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.fk : null;
   const caret = focus === 'itemq' ? document.activeElement.selectionStart : null;
+  S.tinfo = applyTraits({ team: S.team, champ: S.champ, trait: S.trait, rules: S.rules });
   renderPool();
   renderTeam();
   renderTraits();
@@ -587,6 +718,23 @@ function setupControls() {
   const cap = $('#cap');
   cap.replaceChildren(...Array.from({ length: 12 }, (_, i) => h('option', { value: String(i + 1), text: String(i + 1) })));
   cap.addEventListener('change', (e) => { S.cap = Number(e.target.value); if (S.team.length > S.cap) { S.team.length = S.cap; if (S.ref && !S.team.includes(S.ref)) S.ref = { ...S.ref, items: [...S.ref.items] }; } persist(); render(); });
+
+  const tg = $('#traits-on');
+  tg.checked = S.traitsOn;
+  tg.addEventListener('change', () => { S.traitsOn = tg.checked; S.builds = null; persist(); render(); });
+
+  // dropping a unit on the champion list takes it off the board
+  const pool = $('.pool');
+  pool.addEventListener('dragover', (e) => { if (dragging && dragging.kind === 'unit') { e.preventDefault(); pool.classList.add('over'); } });
+  pool.addEventListener('dragleave', (e) => { if (!pool.contains(e.relatedTarget)) pool.classList.remove('over'); });
+  pool.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const d = dragging;
+    endDrag();
+    pool.classList.remove('over');
+    const u = d && d.kind === 'unit' ? S.team.find((x) => x.id === d.id) : null;
+    if (u) removeUnit(u);
+  });
 
   $('#btn-share').addEventListener('click', async () => {
     persist();
@@ -623,6 +771,8 @@ async function boot() {
     S.item = Object.fromEntries(data.items.map((i) => [i.id, i]));
     S.trait = Object.fromEntries(data.traits.map((t) => [t.name, t]));
     S.comp = Object.fromEntries(data.components.map((k) => [k.id, k]));
+
+    S.rules = await fetch('config/traits.json').then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
 
     restore();
     S.ref = S.team[0] || { id: (data.champions.find((c) => c.cost === 4) || data.champions[0]).id, star: 2, items: [] };

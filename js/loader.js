@@ -2,6 +2,7 @@
 // cached copy in this browser (< 24 h old) → live download from CommunityDragon.
 
 import { buildDataset, RAW_URL } from './slim.js';
+import { ruleVarNames } from './traits.js';
 
 const DB = 'tft-comp-lab';
 const STORE = 'kv';
@@ -72,7 +73,8 @@ export async function loadData(onProgress = () => {}) {
     }
     onProgress(got, got);
     const raw = JSON.parse(await new Blob(chunks).text());
-    const data = buildDataset(raw, cfg);
+    const rules = await fetchJson('config/traits.json').catch(() => ({}));
+    const data = buildDataset(raw, { ...cfg, varNames: ruleVarNames(rules) });
     await idbSet('dataset', { savedAt: Date.now(), data });
     return { data, from: 'live' };
   } catch (err) {

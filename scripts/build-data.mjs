@@ -6,12 +6,14 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDataset, RAW_URL } from '../js/slim.js';
+import { ruleVarNames } from '../js/traits.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 
 const cfg = await readFile(resolve(root, 'config/items.json'), 'utf8').then(JSON.parse).catch(() => ({}));
+const rules = await readFile(resolve(root, 'config/traits.json'), 'utf8').then(JSON.parse).catch(() => ({}));
 const input = flag('--in');
 const raw = input
   ? JSON.parse(await readFile(input, 'utf8'))
@@ -20,7 +22,7 @@ const raw = input
       return r.json();
     });
 
-const data = buildDataset(raw, { ...cfg, set: flag('--set') });
+const data = buildDataset(raw, { ...cfg, set: flag('--set'), varNames: ruleVarNames(rules) });
 const out = flag('--out') || resolve(root, 'data/set.json');
 await mkdir(dirname(out), { recursive: true });
 await writeFile(out, JSON.stringify(data));

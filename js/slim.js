@@ -13,6 +13,32 @@ export function assetUrl(path) {
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const round = (v, p = 2) => Math.round(v * 10 ** p) / 10 ** p;
 
+/* ---------- hashed variable names ---------- */
+
+// Riot stores many variables as "{8c16b281}": the FNV-1a hash of the lowercase variable name.
+// Names that appear in descriptions (or in config/traits.json) can be mapped back.
+export function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (const ch of String(str).toLowerCase()) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+export function nameVars(vars, text, extraNames = []) {
+  const out = { ...(vars || {}) };
+  const have = new Set(Object.keys(out).map((k) => k.toLowerCase()));
+  const names = new Set(extraNames);
+  for (const m of String(text || '').matchAll(/@([A-Za-z0-9_]+?)(?:\*100)?@/g)) names.add(m[1]);
+  for (const n of names) {
+    if (have.has(n.toLowerCase())) continue;
+    const key = '{' + fnv1a(n) + '}';
+    if (key in out) { out[n] = out[key]; have.add(n.toLowerCase()); }
+  }
+  return out;
+}
+
 /* ---------- text cleanup ---------- */
 
 const SCALE_LABEL = {
@@ -175,31 +201,27 @@ function buildItems(raw, opts) {
     if (!prev || setOf(i.apiName) > setOf(prev.apiName)) byName.set(i.name, i);
   }
 
-  const slimItem = (i) => ({
-    id: i.apiName,
-    name: i.name,
-    icon: assetUrl(i.icon),
-    components: recipe(i),
-    stats: itemStats(i.effects),
-    desc: cleanText(i.desc, i.effects),
-  });
+  const slimItem = (i) => {
+    const eff = nameVars(i.effects, i.desc);
+    return { id: i.apiName, name: i.name, icon: assetUrl(i.icon), components: recipe(i), stats: itemStats(eff), desc: cleanText(i.desc, eff) };
+  };
 
   const items = [...byName.values()].map(slimItem).sort((a, b) => a.name.localeCompare(b.name));
   const components = [...compIds]
     .map((id) => byId.get(id))
-    .map((c) => ({ id: c.apiName, name: c.name, icon: assetUrl(c.icon), stats: itemStats(c.effects) }))
+    .map((c) => ({ id: c.apiName, name: c.name, icon: assetUrl(c.icon), stats: itemStats(nameVars(c.effects, c.desc)) }))
     .sort((a, b) => a.name.localeCompare(b.name));
   return { items, components };
 }
 
 /* ---------- traits ---------- */
 
-function buildTraits(setTraits, usedNames) {
+function buildTraits(setTraits, usedNames, varNames = []) {
   const out = [];
   for (const t of setTraits || []) {
     if (!usedNames.has(t.name)) continue;
     const effects = (t.effects || [])
-      .map((e) => ({ min: e.minUnits == null ? 1 : e.minUnits, max: e.maxUnits, style: e.style, vars: e.variables || {} }))
+      .map((e) => ({ min: e.minUnits == null ? 1 : e.minUnits, max: e.maxUnits, style: e.style, vars: nameVars(e.variables, t.desc, varNames) }))
       .sort((a, b) => a.min - b.min);
     // Rewrite "<row>(@MinUnits@) …</row>" rows with each tier's own numbers.
     let i = 0;
@@ -215,7 +237,12 @@ function buildTraits(setTraits, usedNames) {
       name: t.name,
       icon: assetUrl(t.icon),
       desc,
-      tiers: effects.map((e) => ({ min: e.min, style: e.style })),
+      tiers: effects.map((e) => ({
+        min: e.min,
+        style: e.style,
+        // keep only named numeric variables (unresolved {hash} keys are useless to the site)
+        vars: Object.fromEntries(Object.entries(e.vars).filter(([k, v]) => k[0] !== '{' && typeof v === 'number')),
+      })),
     });
   }
   return out;
@@ -259,7 +286,7 @@ export function buildDataset(raw, opts = {}) {
   champions.sort((a, b) => a.cost - b.cost || a.name.localeCompare(b.name));
 
   const usedTraits = new Set(champions.flatMap((c) => c.traits));
-  const traits = buildTraits(set.traits, usedTraits);
+  const traits = buildTraits(set.traits, usedTraits, opts.varNames || []);
   const { items, components } = buildItems(raw, opts);
 
   return {

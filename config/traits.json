@@ -1,0 +1,40 @@
+{
+  "_help": "Which trait variable means which stat, and who gets it. Keys are trait names. 'members' = champions with the trait (replaces 'team' for them), 'team' = everyone else on the board, 'adjacent' = non-members standing next to a member. Stats: ad / as / crit / amp / dur / omni (fractions, 0.1 = 10%), ap / armor / mr / hp / mana / manaRegen (points), hpPct (fraction of base Health), shield (fraction of max Health, counted as extra effective Health), adap (AD% for attack-scaling units, AP for spell-scaling ones). A term is a number or { var, scale, times, timesVar } where var is a variable name from the trait's text. Traits not listed here are shown but their stats are not counted.",
+
+  "Blossom": { "members": { "ad": { "var": "ADAP" }, "ap": { "var": "ADAP", "scale": 100 }, "hpPct": { "var": "BonusHealth" } } },
+
+  "Spellweaver": { "team": { "ap": { "var": "TeamwideAP", "scale": 100 } }, "members": { "ap": { "var": "SpellweaverAP", "scale": 100 } } },
+
+  "Adaptor": { "members": { "adap": { "var": "ADAPGain" } } },
+
+  "Defender": { "team": { "armor": { "var": "NonDefenderDefenseGain" }, "mr": { "var": "NonDefenderDefenseGain" } },
+                "members": { "armor": { "var": "DefenderDefenseGain" }, "mr": { "var": "DefenderDefenseGain" } } },
+
+  "Juggernaut": { "team": { "dur": { "var": "TeamDurability" } }, "members": { "dur": { "var": "JuggernautDurability" } } },
+
+  "Brawler": { "team": { "hp": { "var": "BrawlerTeamHealth" } }, "members": { "hpPct": { "var": "BrawlerHealthPercent" } } },
+
+  "Executioner": { "members": { "crit": { "var": "CritChance" } } },
+
+  "Blackthorn": { "team": { "hp": { "var": "Health" } } },
+
+  "Lunar": {
+    "members":  { "as": { "var": "AttackSpeed", "timesVar": "LunarMultiplier" }, "ap": { "var": "AbilityPower", "scale": 100, "timesVar": "LunarMultiplier" } },
+    "adjacent": { "as": { "var": "AttackSpeed" }, "ap": { "var": "AbilityPower", "scale": 100 } }
+  },
+
+  "Rapidfire": {
+    "team":    { "as": { "var": "TeamAS" } },
+    "members": { "as": [ { "var": "TeamAS" }, { "var": "ASPerAttack", "times": 7 } ] }
+  },
+
+  "Hunter": { "members": { "ad": { "var": "HunterAD" } } },
+
+  "Vanguard": { "members": { "shield": { "var": "MaxHealthShield", "times": 0.5 } } },
+
+  "Ravager": { "members": { "omni": { "var": "Omnivamp" }, "amp": { "var": "BonusDamagePercentBase" } } },
+
+  "Invoker": { "team": { "manaRegen": { "var": "TeamManaRegen" } }, "members": { "manaRegen": { "var": "InvokerManaBonus" } } },
+
+  "Solar": { "team": { "shield": { "var": "ShieldRatio", "times": 0.5 }, "amp": { "var": "BonusMagicDamage" } } }
+}

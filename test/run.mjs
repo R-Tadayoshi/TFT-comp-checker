@@ -5,10 +5,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDataset, itemStats, cleanText, assetUrl } from '../js/slim.js';
 import { computeStats, scoreOf, guessMode, bestBuilds } from '../js/engine.js';
+import { applyTraits, ruleVarNames } from '../js/traits.js';
+import { neighbors } from '../js/board.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const raw = JSON.parse(await readFile(resolve(here, 'fixture-raw.json'), 'utf8'));
-const ds = buildDataset(raw);
+const rules = JSON.parse(await readFile(resolve(here, '../config/traits.json'), 'utf8'));
+const ds = buildDataset(raw, { varNames: ruleVarNames(rules) });
 let n = 0;
 const ok = (name, fn) => { fn(); n++; console.log('  ✓', name); };
 
@@ -149,6 +152,106 @@ ok('best 3-item builds: sorted, no duplicates, better than a single item', () =>
   const naked = computeStats(w, 2, []);
   const bestSingle = Math.max(...ds.items.map((it) => scoreOf(computeStats(w, 2, [it]), naked, 'ad')));
   assert.ok(top[0].score > bestSingle);
+});
+
+console.log('hashed variables');
+ok('hashed trait variables are decoded by name', () => {
+  const d = ds.traits.find((t) => t.name === 'Defender');
+  assert.equal(d.tiers[0].vars.NonDefenderDefenseGain, 12);
+  assert.equal(d.tiers[1].vars.DefenderDefenseGain, 60);
+  assert.ok(!Object.keys(d.tiers[0].vars).some((k) => k[0] === '{'));
+});
+ok('trait text shows decoded numbers per tier', () => {
+  const d = ds.traits.find((t) => t.name === 'Defender');
+  assert.match(d.desc, /2\) 25/);
+  assert.match(d.desc, /4\) 60/);
+});
+
+console.log('traits');
+const champ = Object.fromEntries(ds.champions.map((c) => [c.id, c]));
+const trait = Object.fromEntries(ds.traits.map((t) => [t.name, t]));
+const unit = (name, pos) => ({ id: ds.champions.find((c) => c.name === name).id, star: 2, items: [], pos });
+const run = (team) => applyTraits({ team, champ, trait, rules });
+const statsOf = (res, u) => res.byUnit.get(u).stats;
+
+ok('hex neighbours follow the offset rows', () => {
+  assert.deepEqual(neighbors(0).sort((a, b) => a - b), [1, 7]);           // top-left corner
+  assert.deepEqual(neighbors(8).sort((a, b) => a - b), [1, 2, 7, 9, 15, 16]); // odd row, shifted right
+  assert.deepEqual(neighbors(15).sort((a, b) => a - b), [7, 8, 14, 16, 21, 22]); // even row, shifted left
+  for (let p = 0; p < 28; p++) for (const q of neighbors(p)) assert.ok(neighbors(q).includes(p), `${p}<->${q}`);
+});
+ok('members get the member value, everyone else the team value (Defender)', () => {
+  const karma = unit('Karma', 0), leb = unit('LeBlanc', 1), shen = unit('Shen', 2);
+  const res = run([karma, leb, shen]);
+  assert.equal(statsOf(res, shen).armor, 25);   // Defender member
+  assert.equal(statsOf(res, leb).armor, 25);
+  assert.equal(statsOf(res, karma).armor, 12);  // not a Defender: team bonus
+});
+ok('team AP and member AP replace each other (Spellweaver)', () => {
+  const karma = unit('Karma', 0), leb = unit('LeBlanc', 1), shen = unit('Shen', 2);
+  const res = run([karma, leb, shen]);
+  assert.ok(Math.abs(statsOf(res, karma).ap - 10) < 1e-9);  // member at tier 2
+  assert.ok(Math.abs(statsOf(res, shen).ap - 10) < 1e-9);   // team bonus
+});
+ok('inactive traits give nothing', () => {
+  const res = run([unit('Karma', 0), unit('Warwick', 1)]);
+  assert.equal(statsOf(res, res.byUnit.keys().next().value).armor, undefined);
+  assert.equal(res.active.length, 0);
+});
+ok('active traits without a rule are reported, not silently dropped', () => {
+  const res = run([unit('Warwick', 0), unit('Camille', 1)]); // Ravager 2: has a rule; Coven/Blackthorn 1: inactive
+  assert.ok(res.active.some((a) => a.name === 'Ravager'));
+  const res2 = run([unit('Shen', 0), unit('LeBlanc', 1)]);   // Defender 2 has a rule
+  assert.ok(!res2.uncounted.some((u) => u.name === 'Defender'));
+});
+ok('unique champions count once even if two variants are fielded', () => {
+  const a = unit('Lux (Blossom)', 0), b = unit('Lux (Fae)', 1);
+  const res = run([a, b]);
+  assert.equal(res.active.find((x) => x.name === 'Avatar').count, 1);
+});
+ok('trait stats flow into the numbers (Defender armor, Blossom % health)', () => {
+  const shen = unit('Shen', 0), leb = unit('LeBlanc', 1);
+  const res = run([shen, leb]);
+  const withT = computeStats(champ[shen.id], 2, [], statsOf(res, shen));
+  const without = computeStats(champ[shen.id], 2, []);
+  assert.equal(withT.armor - without.armor, 25);
+  assert.ok(withT.ehpP > without.ehpP);
+  const hp = computeStats(champ[shen.id], 2, [], { hpPct: 0.1 });
+  assert.ok(Math.abs(hp.hp / without.hp - 1.1) < 1e-9);
+  const sh = computeStats(champ[shen.id], 2, [], { shield: 0.2 });
+  assert.ok(Math.abs(sh.ehpM / without.ehpM - 1.2) < 1e-9);
+});
+
+// Adjacency: handcrafted data so no fixture needs to know about Lunar.
+const mk = (id, name, traits, ability = { adShare: 0, apShare: 1 }) => ({ id, name, traits, stats: {}, ability });
+const lcCh = { m1: mk('m1', 'Moon', ['Lunar']), m2: mk('m2', 'Moon2', ['Lunar']), o: mk('o', 'Other', ['X']) };
+const lcTrait = { Lunar: { name: 'Lunar', tiers: [{ min: 2, style: 1, vars: { AttackSpeed: 0.07, AbilityPower: 0.07, LunarMultiplier: 1 } }] } };
+const lcRules = { Lunar: rules.Lunar };
+ok('Lunar: members get double, units next to a member get the normal bonus, others nothing', () => {
+  const a = { id: 'm1', pos: 10 }, b = { id: 'm2', pos: 3 }, near = { id: 'o', pos: 9 }, far = { id: 'o', pos: 27 };
+  const res = applyTraits({ team: [a, b, near, far], champ: lcCh, trait: lcTrait, rules: lcRules });
+  assert.ok(Math.abs(res.byUnit.get(a).stats.as - 0.14) < 1e-9);
+  assert.ok(Math.abs(res.byUnit.get(a).stats.ap - 14) < 1e-9);
+  assert.ok(Math.abs(res.byUnit.get(near).stats.as - 0.07) < 1e-9);
+  assert.equal(res.byUnit.get(far).stats.as, undefined);
+});
+ok('"adap" gives AD to attack units and AP to spell units (Adaptor)', () => {
+  const ch = { a: mk('a', 'A', ['Adaptor'], { adShare: 1, apShare: 0 }), b: mk('b', 'B', ['Adaptor'], { adShare: 0, apShare: 1 }) };
+  const tr = { Adaptor: { name: 'Adaptor', tiers: [{ min: 2, style: 1, vars: { ADAPGain: 0.25 } }] } };
+  const ua = { id: 'a', pos: 0 }, ub = { id: 'b', pos: 1 };
+  const res = applyTraits({ team: [ua, ub], champ: ch, trait: tr, rules: { Adaptor: rules.Adaptor } });
+  assert.equal(res.byUnit.get(ua).stats.ad, 0.25);
+  assert.equal(res.byUnit.get(ub).stats.ap, 25);
+});
+ok('a rule whose variable is missing from the data is flagged', () => {
+  const ch = { a: mk('a', 'A', ['Hunter']), b: mk('b', 'B', ['Hunter']) };
+  const tr = { Hunter: { name: 'Hunter', tiers: [{ min: 2, style: 1, vars: {} }] } };
+  const res = applyTraits({ team: [{ id: 'a', pos: 0 }, { id: 'b', pos: 1 }], champ: ch, trait: tr, rules: { Hunter: rules.Hunter } });
+  assert.equal(res.uncounted[0].reason, 'variables not found in the data');
+});
+ok('every variable the rules need can be decoded from a description', () => {
+  assert.ok(ruleVarNames(rules).includes('DefenderDefenseGain'));
+  assert.ok(ruleVarNames(rules).includes('LunarMultiplier'));
 });
 
 console.log(`\n${n} checks passed`);
