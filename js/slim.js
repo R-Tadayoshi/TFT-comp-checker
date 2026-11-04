@@ -166,7 +166,7 @@ export function itemStats(effects) {
 
 /* ---------- items ---------- */
 
-const NOT_STANDARD = /Emblem|Artifact|Radiant|Consumable|Anvil|Forge|Reforger|Remover|Ornn|Tome|Crown|Augment/i;
+const NOT_STANDARD = /Emblem|Artifact|Radiant|Consumable|Anvil|Forge|Reforger|Remover|Ornn|Tome|Tactician|Augment/i;
 const SPECIAL_COMPONENT = /Spatula|FryingPan|Frying/i;
 
 function buildItems(raw, opts) {
